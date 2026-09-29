@@ -1,0 +1,25 @@
+# Build context is the repo root; keep it small and free of host artefacts.
+.git
+.gitignore
+**/node_modules
+**/.next
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/coverage
+**/*.egg-info
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+**/!.env.example
+infrastructure/nginx/certs
+*.log
+.DS_Store
+.idea
+.vscode

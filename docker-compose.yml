@@ -1,0 +1,146 @@
+name: vantage
+
+x-common-env: &common-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  TRADING_MODE: ${TRADING_MODE:-PAPER}
+  LIVE_TRADING_ENABLED: ${LIVE_TRADING_ENABLED:-false}
+  TZ: ${TZ:-UTC}
+  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://vantage:change-me-postgres@postgres:5432/vantage}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  # These names must match apps/api/app/core/config.py exactly.
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+  ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-30}
+  REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-30}
+  REFRESH_PEPPER: ${REFRESH_PEPPER:?set REFRESH_PEPPER in .env}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  CREDENTIAL_MASTER_KEY: ${CREDENTIAL_MASTER_KEY:?set CREDENTIAL_MASTER_KEY in .env}
+  CREDENTIAL_KEY_VERSION: ${CREDENTIAL_KEY_VERSION:-1}
+  METAAPI_TOKEN: ${METAAPI_TOKEN:-}
+  METAAPI_API_URL: ${METAAPI_API_URL:-https://sandbox.app.metaapi.cloud}
+  METAAPI_ENABLED: ${METAAPI_ENABLED:-false}
+  METAAPI_REGION: ${METAAPI_REGION:-eu-central-1}
+  # Read by trading_engine/core/settings.py
+  ENGINE_TICK_SECONDS: ${ENGINE_TICK_SECONDS:-1}
+  RECONCILE_INTERVAL_SECONDS: ${RECONCILE_INTERVAL_SECONDS:-30}
+  MARKET_DATA_STALE_SECONDS: ${MARKET_DATA_STALE_SECONDS:-15}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vantage}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-vantage}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vantage} -d ${POSTGRES_DB:-vantage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment: *common-env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  trading-engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/engine.Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment: *common-env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      api: {condition: service_healthy}
+    command: ["python", "-m", "trading_engine.main"]
+
+  backtest-worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/engine.Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment: *common-env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    command: ["python", "-m", "trading_engine.backtest_worker"]
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/web.Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      <<: *common-env
+      NODE_ENV: production
+      # Server-side rewrite target (inside the compose network).
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8000}
+      # Empty => the browser uses same-origin relative /api and /ws paths.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    depends_on:
+      api: {condition: service_healthy}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  nginx:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/nginx.Dockerfile
+    profiles: ["edge"]
+    restart: unless-stopped
+    depends_on: [web, api]
+    ports:
+      - "80:80"
+      - "443:443"
+
+volumes:
+  pgdata:
+  redisdata:
