@@ -12,10 +12,21 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY apps/web/ ./
 
-# NEXT_PUBLIC_* values are inlined at build time, so the browser must use
-# same-origin relative URLs (the app proxies /api to the API container).
+# next.config.mjs reads API_INTERNAL_URL while building, because rewrites are
+# baked into the output. NEXT_PUBLIC_WS_URL is inlined into the client bundle
+# for the same reason. Both target the API Container App's FQDN, which only
+# exists after the environment is provisioned, so the build is split into phases
+# and these are passed in as build args. The defaults keep a local image working
+# unchanged.
+ARG API_INTERNAL_URL=http://127.0.0.1:8000
+ARG NEXT_PUBLIC_WS_URL=
+
+# NEXT_PUBLIC_API_URL is deliberately left unset so the browser keeps using
+# same-origin /api and the rewrite above; only the socket goes direct.
 ENV NEXT_TELEMETRY_DISABLED=1 \
-    NODE_ENV=production
+    NODE_ENV=production \
+    API_INTERNAL_URL=${API_INTERNAL_URL} \
+    NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL}
 RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime

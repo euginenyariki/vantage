@@ -149,9 +149,47 @@ The ones that matter most:
 | `METAAPI_TOKEN` | *(empty)* | Required to reach a real MT4/MT5 account |
 | `CREDENTIAL_MASTER_KEY` | *(dev placeholder)* | Encrypts broker credentials at rest |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated or JSON array |
+| `NEXT_PUBLIC_WS_URL` | *(empty)* | Realtime endpoint; see below |
 
 Rotating `CREDENTIAL_MASTER_KEY` invalidates every stored broker credential. Plan a
 re-encryption before you rotate it.
+
+REST requests are same-origin: the web app rewrites `/api/*` to the API, so the
+browser needs no CORS handshake and the refresh cookie stays first-party. The
+WebSocket cannot be proxied that way, because a Next.js rewrite does not carry an
+upgrade, so `NEXT_PUBLIC_WS_URL` points the socket straight at the API's origin.
+
+## Deploying to Azure
+
+`infrastructure/azure/` holds a Bicep deployment for Container Apps. It needs
+`az login` first, and no local Docker — the images are built in ACR.
+
+```bash
+az login
+infrastructure/azure/deploy.sh
+```
+
+The script provisions a resource group, a registry, a Container Apps environment,
+PostgreSQL and Redis; builds the three images; and deploys four apps (API, trading
+engine, backtest worker, dashboard). On first run it generates the secrets into
+`.azure-deploy-secrets` (gitignored, mode 600) and reuses them afterwards, so
+re-running never invalidates sessions or stored broker credentials.
+
+Two details are easy to get wrong and are handled explicitly:
+
+- The web image bakes the API's origin into its build, because Next.js rewrites
+  and `NEXT_PUBLIC_*` values are resolved at build time. The script predicts the
+  Container App FQDNs from the environment's default domain, builds against those,
+  then verifies the prediction and rebuilds if it was wrong.
+- Redis access keys are set on create, which ARM's schema does not promise to
+  honour. The script reads the key back and aborts rather than leaving an
+  unauthenticated cache on a public endpoint.
+
+Override the defaults with `REGION`, `PREFIX`, and `IMAGE_TAG` in the environment.
+
+The deployed stack is demo-grade in two respects, both listed in
+`docs/known-gaps.md`: there is no mailer, and the database and cache sit on public
+endpoints behind an "allow Azure services" firewall rule.
 
 ## Honest limitations
 

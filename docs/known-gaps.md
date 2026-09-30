@@ -37,3 +37,21 @@ Password reset is currently unavailable; recovery is manual via an operator.
 The bundled bar generator is a random walk, and the MetaApi feed is not wired into
 the backtest path. Backtest results therefore measure the code, not an edge. Treat
 every number produced locally as a smoke test, not evidence.
+
+## No container registry, CI, or local-image workflow
+
+Docker is not available on the development machine, so nothing here has been
+built into a container locally; the images are built in ACR by
+`infrastructure/azure/deploy.sh`. There is no CI pipeline, so the 288 tests are
+only run by hand. The web app has no unit tests at all, only typecheck and build.
+
+## Deployed data stores are publicly reachable
+
+PostgreSQL and Redis are deployed with public endpoints. The database relies on
+the "allow Azure services" firewall rule, which permits any Azure resource on the
+internet to attempt a connection, and is authenticated only by a password. Redis
+is behind an access key but the same network exposure applies.
+
+The upgrade path is a private endpoint plus VNet integration on the Container Apps
+environment. That is the right shape before any real money or real user data is
+involved.

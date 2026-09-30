@@ -215,20 +215,30 @@ export const backtestApi = {
     api<BacktestJob>(`/backtests/${id}/requeue`, { method: 'POST' }),
 };
 
+/** Resolve the realtime endpoint.
+ *
+ * REST stays same-origin (`/api` is rewritten to the API container by
+ * next.config), but Next rewrites cannot proxy a WebSocket upgrade, so the
+ * socket has to address the API directly. NEXT_PUBLIC_WS_URL therefore points
+ * at the API's own origin; if it is unset we fall back to the REST origin.
+ */
+function wsUrl(): string {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const configured = process.env.NEXT_PUBLIC_WS_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (configured) return `${configured.replace(/^https?:/, proto)}/ws`;
+  return `${proto}://${window.location.host}/ws`;
+}
+
 /** Open a realtime event stream. Returns a disposer. */
 export function connectEvents(
   onEvent: (e: Record<string, unknown>) => void,
   onStatus?: (connected: boolean) => void,
 ): () => void {
   if (typeof window === 'undefined') return () => {};
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const host = process.env.NEXT_PUBLIC_API_URL
-    ? process.env.NEXT_PUBLIC_API_URL.replace(/^https?:/, proto)
-    : `${proto}://${window.location.host}/api`;
   const token = accessToken;
   if (!token) return () => {};
 
-  const socket = new WebSocket(`${host}/ws?token=${encodeURIComponent(token)}`);
+  const socket = new WebSocket(`${wsUrl()}?token=${encodeURIComponent(token)}`);
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
 
