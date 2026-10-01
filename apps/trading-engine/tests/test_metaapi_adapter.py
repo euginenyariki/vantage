@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import pytest
 
+from trading_engine.brokers.base import BrokerRejectedError
 from trading_engine.brokers.metaapi import MetaApiAdapter
-from trading_engine.core.types import Side
+from trading_engine.core.types import OrderRequest, OrderType, Side, TradingMode
 
 
 def _adapter(monkeypatch: pytest.MonkeyPatch, payload) -> MetaApiAdapter:
@@ -149,3 +150,111 @@ async def test_get_tick_maps_a_symbol_payload(monkeypatch: pytest.MonkeyPatch):
     assert tick.bid == pytest.approx(1.0850)
     assert tick.ask == pytest.approx(1.0852)
     assert tick.volume == pytest.approx(3.0)
+
+
+def _live_adapter(monkeypatch: pytest.MonkeyPatch, info_payload) -> MetaApiAdapter:
+    """Adapter in LIVE mode, already connected, with account-info stubbed.
+
+    ``account_type`` is what the third live gate reads, so the payload supplied here
+    is what decides whether a live order is allowed through.
+    """
+    adapter = MetaApiAdapter(
+        token="test-token", account_login=12345, account_password="secret",
+        account_server="MetaQuotes-Live", mode=TradingMode.LIVE, live_allowed=True,
+    )
+    adapter._account_id = "acct-live"
+    adapter._state = adapter._state.__class__.CONNECTED
+
+    async def _fake_request(method: str, path: str, **kwargs):
+        if "account-info" in path:
+            return info_payload
+        return {"id": "order-1", "ticket": 555}
+
+    monkeypatch.setattr(adapter, "_request", _fake_request)
+    return adapter
+
+
+async def test_account_type_reads_a_live_account(monkeypatch: pytest.MonkeyPatch):
+    adapter = _live_adapter(monkeypatch, {"accountType": "live"})
+    assert await adapter.account_type() == "live"
+
+
+async def test_account_type_reads_a_demo_account(monkeypatch: pytest.MonkeyPatch):
+    adapter = _live_adapter(monkeypatch, {"accountType": "demo"})
+    assert await adapter.account_type() == "demo"
+
+
+async def test_account_type_fails_closed_when_the_field_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An unknown account type must never be assumed live."""
+    adapter = _live_adapter(monkeypatch, {"login": 12345})
+    with pytest.raises(BrokerRejectedError):
+        await adapter.account_type()
+
+
+async def test_verify_live_account_rejects_a_demo_credential(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The regression this gate exists for: live flag and per-bot grant both set,
+    but the credential is a demo account."""
+    adapter = _live_adapter(monkeypatch, {"accountType": "demo"})
+    with pytest.raises(BrokerRejectedError) as exc:
+        await adapter.verify_live_account()
+    assert "demo" in str(exc.value).lower()
+
+
+async def test_verify_live_account_passes_a_live_credential(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    adapter = _live_adapter(monkeypatch, {"accountType": "live"})
+    await adapter.verify_live_account()
+
+
+async def test_verify_live_account_is_skipped_in_demo_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A demo order is a real order against a simulated balance, so the mode
+    itself is the permission. It must not demand live-account proof."""
+    adapter = MetaApiAdapter(
+        token="t", account_login=1, account_password="p",
+        account_server="s", mode=TradingMode.DEMO, live_allowed=False,
+    )
+    adapter._account_id = "acct-demo"
+    await adapter.verify_live_account()
+
+
+async def test_submit_order_refuses_a_demo_account_in_live_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """End-to-end through submit_order: no live order reaches a demo account even
+    with the server flag and the grant both switched on."""
+    adapter = _live_adapter(monkeypatch, {"accountType": "demo"})
+    submitted: list = []
+
+    async def _fake_request(method: str, path: str, **kwargs):
+        if "account-info" in path:
+            return {"accountType": "demo"}
+        submitted.append((method, path))
+        return {"id": "order-1", "ticket": 555}
+
+    monkeypatch.setattr(adapter, "_request", _fake_request)
+    with pytest.raises(BrokerRejectedError):
+        await adapter.submit_order(
+            OrderRequest(
+                symbol="EURUSD", side=Side.BUY, order_type=OrderType.MARKET,
+                volume=0.1, client_order_id="cid-1",
+            )
+        )
+    assert not submitted, "an order was submitted to a demo account in live mode"
+
+
+async def test_disconnect_invalidates_the_live_verification(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A cached 'verified live' must not survive into a different connection."""
+    adapter = _live_adapter(monkeypatch, {"accountType": "live"})
+    await adapter.verify_live_account()
+    adapter._live_account_verified = True
+    await adapter.disconnect()
+    assert adapter._live_account_verified is False

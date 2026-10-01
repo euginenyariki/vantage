@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import field_validator
@@ -21,9 +22,30 @@ DEV_REFRESH_SECRET = "dev-insecure-refresh-secret-change-me"
 DEV_CREDENTIAL_KEY = "dev-insecure-credential-key-change-me"
 
 
+def _repo_env_file() -> str:
+    """Locate the repository-root ``.env``.
+
+    A bare ``env_file=".env"`` is resolved against the *current working directory*,
+    so the same code silently read different configuration depending on where it
+    was launched from: the repo root saw the real file, while a process started in
+    ``apps/api`` or ``apps/trading-engine`` saw no file at all and fell back to
+    the Docker-service defaults. That failure is quiet and confusing, because
+    startup succeeds and then nothing connects.
+
+    Walking up from this file locates the one ``.env`` that belongs to the checkout,
+    regardless of the caller's working directory. A packaged deployment has no such
+    file and relies purely on real environment variables, which is unaffected.
+    """
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / ".env"
+        if candidate.is_file():
+            return str(candidate)
+    return ".env"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+        env_file=_repo_env_file(), env_file_encoding="utf-8", extra="ignore", case_sensitive=False
     )
 
     # --- core ------------------------------------------------------------- #

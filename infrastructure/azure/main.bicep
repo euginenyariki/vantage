@@ -31,16 +31,46 @@ param postgresAdminPassword string
 @secure()
 param redisPassword string
 
+@description('Data tier. \'managed\' provisions billable Postgres and Redis, about $28/month. \'demo\' runs both as internal container apps in the environment: free, but every redeploy or scale-in wipes all data.')
+@allowed([ 'managed', 'demo' ])
+param dataMode string = 'managed'
+
 module platform 'platform.bicep' = {
   name: 'vantage-platform'
   scope: resourceGroup(resourceGroupName)
   params: {
    location: location
+   dataMode: dataMode
    namePrefix: namePrefix
    postgresVersion: postgresVersion
    postgresAdminUser: postgresAdminUser
    postgresAdminPassword: postgresAdminPassword
    redisPassword: redisPassword
+  }
+}
+
+// Ephemeral data tier.
+//
+// Deployed unconditionally, with the resource-level condition inside demo.bicep.
+// That is deliberate: a conditional *module* has no outputs at deployment time, so
+// the output expressions below would fail to resolve in managed mode. Guarding the
+// resources instead keeps every output in this file valid in both modes, and the
+// FQDNs are computed from parameters rather than read back from ARM, so they are
+// valid before the apps have started.
+//
+// The implicit dependency on the platform module keeps this after the environment
+// exists, which is the only prerequisite.
+module demo 'demo.bicep' = {
+  name: 'vantage-demo-data'
+  scope: resourceGroup(resourceGroupName)
+  params: {
+   dataMode: dataMode
+   environmentName: platform.outputs.environmentName
+   environmentDefaultDomain: platform.outputs.environmentDefaultDomain
+   postgresUser: 'vantage'
+   postgresPassword: postgresAdminPassword
+   redisPassword: redisPassword
+   databaseName: namePrefix
   }
 }
 
@@ -60,7 +90,11 @@ output environmentName string = platform.outputs.environmentName
 output environmentDefaultDomain string = platform.outputs.environmentDefaultDomain
 output acrName string = platform.outputs.acrName
 output acrLoginServer string = platform.outputs.acrLoginServer
-output postgresFqdn string = platform.outputs.postgresFqdn
-output redisHost string = platform.outputs.redisHost
+output dataMode string = dataMode
+// The managed tier exposes the services directly; the demo tier fronts containers
+// on predictable internal FQDNs. Both carry the same port, so one connection
+// string shape covers either.
+output postgresFqdn string = dataMode == 'managed' ? platform.outputs.postgresFqdn : demo.outputs.pgHost
+output redisHost string = dataMode == 'managed' ? platform.outputs.redisHost : demo.outputs.redisHost
 output redisPort int = platform.outputs.redisPort
 output workspaceName string = platform.outputs.workspaceName

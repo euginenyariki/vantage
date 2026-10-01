@@ -98,6 +98,9 @@ class MetaApiAdapter(BrokerInterface):
         self._account_id: str | None = None
         self._client: httpx.AsyncClient | None = None
         self._lock = asyncio.Lock()
+        # Set only after account_type() has confirmed a live account. Reset on
+        # disconnect so a reconnected adapter re-verifies rather than assuming.
+        self._live_account_verified = False
 
     # ------------------------------------------------------------------ #
     @property
@@ -181,6 +184,7 @@ class MetaApiAdapter(BrokerInterface):
             await self._client.aclose()
             self._client = None
         self._state = ConnectionState.DISCONNECTED
+        self._live_account_verified = False
 
     async def test_connection(self) -> tuple[bool, str]:
         try:
@@ -190,6 +194,50 @@ class MetaApiAdapter(BrokerInterface):
             return True, f"Connected to MetaApi account {self._account_id}"
         except BrokerError as exc:
             return False, str(exc)
+
+    async def account_type(self) -> str:
+        """Return ``'live'`` or ``'demo'`` for the connected account.
+
+        This is the third live-trading gate. The server flag and the per-bot
+        grant can both be correct while the credentials still point at a demo
+        account, which means orders would be simulated while every dashboard and
+        log claimed they were real. The reverse is worse: live credentials reached
+        by a test that meant to stay simulated.
+
+        MetaApi reports this on the account-info endpoint. A response without the
+        field is treated as unverified rather than assumed, so an upstream change
+        fails closed.
+        """
+        if self._account_id is None:
+            raise BrokerConnectionError("MetaApi account not initialised; call connect() first")
+        data = await self._request("GET", f"{self._prefix}/account-info")
+        raw = ""
+        if isinstance(data, dict):
+            raw = str(data.get("accountType") or data.get("type") or "").strip().lower()
+        if raw not in ("live", "demo"):
+            raise BrokerRejectedError(
+                "Could not verify whether the MetaApi account is live or demo "
+                f"(got {raw or 'no account-type field'}). Refusing to classify it."
+            )
+        return raw
+
+    async def verify_live_account(self) -> None:
+        """Fail closed unless the connected account is confirmed live.
+
+        Called before any live order path. In demo mode this is a no-op, because a
+        demo order is a genuine order against a simulated balance and needs no
+        permission beyond the mode itself.
+        """
+        if not self.mode.is_real:
+            return
+        if not self.live_allowed:
+            raise BrokerRejectedError("Live execution is not enabled (rule 15)")
+        kind = await self.account_type()
+        if kind != "live":
+            raise BrokerRejectedError(
+                f"Live execution requires a verified live account, but MetaApi "
+                f"reports this account as '{kind}'. Refusing to submit."
+            )
 
     @property
     def _prefix(self) -> str:
@@ -326,6 +374,11 @@ class MetaApiAdapter(BrokerInterface):
             )
         if self._state is not ConnectionState.CONNECTED:
             raise BrokerConnectionError("MetaApi adapter is not connected")
+        # Confirms the credential really points at a live account. Cached after the
+        # first check: the account type cannot change without a reconnect.
+        if self.mode.is_real and not self._live_account_verified:
+            await self.verify_live_account()
+            self._live_account_verified = True
 
         payload: dict = {
             "symbol": request.symbol.upper(),

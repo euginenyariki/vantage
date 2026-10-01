@@ -47,11 +47,33 @@ only run by hand. The web app has no unit tests at all, only typecheck and build
 
 ## Deployed data stores are publicly reachable
 
-PostgreSQL and Redis are deployed with public endpoints. The database relies on
-the "allow Azure services" firewall rule, which permits any Azure resource on the
-internet to attempt a connection, and is authenticated only by a password. Redis
-is behind an access key but the same network exposure applies.
+In `MODE=managed`, PostgreSQL and Redis are deployed with public endpoints. The
+database relies on the "allow Azure services" firewall rule, which permits any
+Azure resource on the internet to attempt a connection, and is authenticated only
+by a password. Redis is behind an access key but the same network exposure
+applies.
 
 The upgrade path is a private endpoint plus VNet integration on the Container Apps
 environment. That is the right shape before any real money or real user data is
 involved.
+
+In `MODE=demo` this does not apply: both stores run as container apps with
+`external: false` ingress and are reachable only from inside the environment. The
+trade there is durability, not exposure.
+
+## Demo mode has no durable storage
+
+`MODE=demo` does not keep data. It is not the default, but it is available and
+worth understanding before using it. A consumption-only
+Container Apps environment cannot attach a persistent volume, and Azure Files is
+not a workaround — mounting a share at the Postgres data directory corrupts the
+cluster, because SMB does not give Postgres the byte-range locking it requires.
+
+So the database directory is ephemeral container storage. The next redeploy, image
+update, or scale-in of `vantage-pg` deletes every user, bot, order, and backtest,
+with no recovery and no way to restore one. There are no backups in this mode.
+
+This is acceptable for a URL someone can click. It is not acceptable for anything
+where an account, a strategy, or a backtest result needs to still be there
+tomorrow. `MODE=managed` fixes it at roughly $28/month, and it is the mode to use
+before real users are involved.

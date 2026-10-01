@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,9 +15,30 @@ from trading_engine.core.types import TradingMode
 VALID_MODES = {m.value for m in TradingMode}
 
 
+def _repo_env_file() -> str:
+    """Locate the repository-root ``.env``, independent of the working directory.
+
+    The engine's fallback DSNs point at the Docker Compose service names
+    (``postgres`` and ``redis``). If this process is launched from
+    ``apps/trading-engine`` rather than the repo root, a bare ``env_file=".env"``
+    resolves to nothing, so those fallbacks are used and every queue and job lookup
+    targets a host that does not exist here. Startup still succeeds, which is what
+    makes this expensive to diagnose: the worker simply never picks up any work.
+
+    Walking up from this file finds the ``.env`` belonging to the checkout. In a
+    container there is no such file and configuration comes entirely from the
+    environment, so behaviour there is unchanged.
+    """
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / ".env"
+        if candidate.is_file():
+            return str(candidate)
+    return ".env"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+        env_file=_repo_env_file(), env_file_encoding="utf-8", extra="ignore", case_sensitive=False
     )
 
     trading_mode: str = Field(default="PAPER")

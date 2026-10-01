@@ -5,9 +5,18 @@
 // without a VNet. Postgres is password-authenticated, Redis uses an access key.
 // That is a demo-grade network posture: the honest upgrade is a private endpoint
 // plus environment VNet integration. See docs/known-gaps.md.
+//
+// With dataMode 'demo' the managed stores below are not created at all, and
+// demo.bicep runs Postgres and Redis as internal container apps instead. The
+// registry, log workspace, and environment are identical in both modes, so they
+// live here unconditionally and cost nothing on their own.
 
 @description('Deployment region.')
 param location string
+
+@description('Data tier: \'managed\' for the Postgres and Redis below, \'demo\' for ephemeral containers in the environment.')
+@allowed([ 'managed', 'demo' ])
+param dataMode string = 'managed'
 
 @description('Short name prefix, used for globally unique names.')
 param namePrefix string
@@ -86,7 +95,9 @@ resource env 'Microsoft.ContainerService/managedEnvironments@2023-05-01' = {
 }
 
 // ----------------------------------------------------------------------- data
-resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2022-09-01' = {
+// Managed data tier, billable at roughly $28/month for the pair. Skipped
+// entirely in demo mode; see the file header for what replaces it.
+resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2022-09-01' = if (dataMode == 'managed') {
   name: pgName
   location: location
   properties: {
@@ -116,22 +127,22 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2022-09-01' = {
 // "Allow Azure services" is broad: any Azure resource on the internet may try to
 // connect. It is set because the Container Apps environment has no stable
 // outbound IP to pin a narrower rule to.
-resource pgFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2022-09-01' = {
+resource pgFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2022-09-01' = if (dataMode == 'managed') {
   parent: pg
   name: 'allow-azure-services'
   properties: {
-  startIpAddress: '0.0.0.0'
-  endIpAddress: '255.255.255.255'
- }
+   startIpAddress: '0.0.0.0'
+   endIpAddress: '255.255.255.255'
+  }
 }
 
-resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2022-09-01' = {
+resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2022-09-01' = if (dataMode == 'managed') {
   parent: pg
   name: namePrefix
   properties: { charset: 'UTF8' }
 }
 
-resource redis 'Microsoft.Cache/Redis@2022-05-01' = {
+resource redis 'Microsoft.Cache/Redis@2022-05-01' = if (dataMode == 'managed') {
   name: redisName
   location: location
   properties: {
@@ -157,7 +168,13 @@ output environmentName string = env.name
 output environmentDefaultDomain string = env.properties.defaultDomain
 output acrName string = acr.name
 output acrLoginServer string = acr.properties.loginServer
-output postgresFqdn string = pg.properties.fullyQualifiedDomainName
-output redisHost string = redis.properties.hostName
-output redisPort int = redis.properties.port
+output dataMode string = dataMode
+// Empty in demo mode. deploy.sh reads demo.bicep's outputs for that case instead,
+// which keeps the connection-string wiring in one place rather than here.
+// null-forgiving: ARM cannot prove the resources exist even though the guard
+// matches their deploy condition. The ternary already guarantees only the taken
+// branch is evaluated, so this cannot fail in managed mode.
+output postgresFqdn string = dataMode == 'managed' ? pg!.properties.fullyQualifiedDomainName : ''
+output redisHost string = dataMode == 'managed' ? redis!.properties.hostName : ''
+output redisPort int = dataMode == 'managed' ? redis!.properties.port : 6379
 output workspaceName string = log.name

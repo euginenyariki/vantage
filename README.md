@@ -166,14 +166,47 @@ upgrade, so `NEXT_PUBLIC_WS_URL` points the socket straight at the API's origin.
 
 ```bash
 az login
-infrastructure/azure/deploy.sh
+infrastructure/azure/deploy.sh          # MODE=managed, the default
 ```
 
-The script provisions a resource group, a registry, a Container Apps environment,
-PostgreSQL and Redis; builds the three images; and deploys four apps (API, trading
-engine, backtest worker, dashboard). On first run it generates the secrets into
+The script provisions a resource group, a registry, a Container Apps environment;
+builds the three images; and deploys four apps (API, trading engine, backtest
+worker, dashboard). On first run it generates the secrets into
 `.azure-deploy-secrets` (gitignored, mode 600) and reuses them afterwards, so
 re-running never invalidates sessions or stored broker credentials.
+
+### Choosing the data tier
+
+`MODE` selects where PostgreSQL and Redis run. This is the only decision that
+costs money.
+
+| | `MODE=managed` (default) | `MODE=demo` |
+|---|---|---|
+| PostgreSQL | Azure Database for PostgreSQL, B1ms | container in the environment |
+| Redis | Azure Cache for Redis, C0 | container in the environment |
+| Data storage cost | ~$28/month, billing continuously | free |
+| Survives redeploy | yes | **no** |
+| Network exposure | public, behind an "allow Azure services" rule | internal only |
+
+In `demo` mode the database is genuinely ephemeral. A consumption-only Container
+Apps environment cannot attach a persistent volume, and the obvious workaround —
+an Azure Files share — corrupts Postgres, because SMB does not provide the
+byte-range locking it needs. So the data directory lives on ephemeral container
+storage: **the next redeploy, image update, or scale-in deletes every user, bot,
+and backtest.** Nothing is charged for data storage.
+
+`managed` is the default because order and position state has to survive a
+restart before this deployment is allowed anywhere near real money. Use `demo`
+only to get a free URL and click around:
+
+```bash
+MODE=demo infrastructure/azure/deploy.sh
+```
+
+Switching is not a migration. Both modes run the same schema, so switching gives
+you an empty database rather than inheriting the other mode's data. To stop
+paying in `managed` mode, delete the resource group:
+`az group delete -n rg-vantage --yes`.
 
 Two details are easy to get wrong and are handled explicitly:
 
