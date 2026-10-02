@@ -177,7 +177,7 @@ async def test_connection(
     """Authenticate against MetaApi and read the account snapshot.
 
     Uses the sandbox API URL unless production has explicitly pointed
-    ``METAAPI_API_URL`` at the live endpoint.
+    ``METAAPI_REGION`` to match where the account was deployed.
     """
     conn = await _get_conn(session, user.id, conn_id)
 
@@ -195,7 +195,7 @@ async def test_connection(
 
     adapter = MetaApiAdapter(
         token=settings.metaapi_token,
-        api_url=settings.metaapi_api_url,
+        region=settings.metaapi_region,
         account_login=int(decrypt_secret(conn.login_encrypted or "") or 0),
         account_password=decrypt_secret(conn.password_encrypted or ""),
         account_server=decrypt_secret(conn.server_encrypted or ""),

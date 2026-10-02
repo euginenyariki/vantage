@@ -53,8 +53,9 @@ class Settings(BaseSettings):
 
     metaapi_enabled: bool = False
     metaapi_token: str = ""
-    metaapi_api_url: str = "https://sandbox.app.metaapi.cloud"
-    metaapi_region: str = "eu-central-1"
+    # MetaApi only publishes public access for these two regions; the adapter
+    # derives all three of its API hosts from this.
+    metaapi_region: str = "london"
 
     @field_validator("trading_mode")
     @classmethod

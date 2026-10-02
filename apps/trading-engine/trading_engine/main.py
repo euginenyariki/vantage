@@ -191,7 +191,6 @@ class EngineSupervisor:
                 try:
                     broker = MetaApiAdapter(
                         token=self.settings.metaapi_token,
-                        api_url=self.settings.metaapi_api_url,
                         region=self.settings.metaapi_region,
                         account_login=int(decrypt(conn.login_encrypted)),
                         account_password=decrypt(conn.password_encrypted),

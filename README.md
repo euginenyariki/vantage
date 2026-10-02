@@ -147,6 +147,7 @@ The ones that matter most:
 | `TRADING_MODE` | `PAPER` | `PAPER`, `DEMO`, or `LIVE` |
 | `LIVE_TRADING_ENABLED` | `false` | Server-side gate for live trading |
 | `METAAPI_TOKEN` | *(empty)* | Required to reach a real MT4/MT5 account |
+| `METAAPI_REGION` | `london` | MetaApi publishes only `london` and `new-york` |
 | `CREDENTIAL_MASTER_KEY` | *(dev placeholder)* | Encrypts broker credentials at rest |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated or JSON array |
 | `NEXT_PUBLIC_WS_URL` | *(empty)* | Realtime endpoint; see below |

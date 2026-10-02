@@ -89,7 +89,7 @@ var common = {
   // MetaApi endpoints return 503 until a token is added.
  METAAPI_ENABLED: 'false'
  METAAPI_TOKEN: ''
- METAAPI_API_URL: 'https://sandbox.app.metaapi.cloud'
+ METAAPI_REGION: 'london'
 }
 
 resource api 'Microsoft.ContainerService/containerApps@2023-05-01' = {

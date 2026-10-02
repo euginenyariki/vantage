@@ -38,11 +38,40 @@ The bundled bar generator is a random walk, and the MetaApi feed is not wired in
 the backtest path. Backtest results therefore measure the code, not an edge. Treat
 every number produced locally as a smoke test, not evidence.
 
+## MetaApi adapter is unverified against a live account
+
+The adapter was written against MetaApi's published OpenAPI spec and its paths,
+payloads, region hosts and `auth-token` header were checked against the live
+service, but **no request has been made with a real token and a real account**.
+Everything is proven only against recorded payloads and the spec.
+
+Two specific problems were found while verifying it, both outside our control:
+
+- **The provisioning API does not present a valid certificate.**
+  `mt-provisioning-api-v1.<region>.agiliumtrade.ai` serves a self-signed
+  "Kubernetes Ingress Controller Fake Certificate", so TLS verification fails and
+  `provision_account()` and `create_demo_account()` cannot be called from here.
+  The client and market-data hosts are unaffected. Until MetaApi fixes this,
+  accounts must be added in the MetaApi web app and the resulting `account_id`
+  passed to the adapter, which skips provisioning entirely. Worth reporting to
+  support@metaapi.cloud.
+- **Historical candles can wedge the terminal.** MetaApi documents a bug where
+  requesting candles for a symbol the broker has no data for sends the MT5
+  terminal into an infinite loop, and the account must be redeployed to recover.
+  `get_bars` therefore only requests symbols the account actually reports via
+  `get_symbols`, but a symbol can still lose its history later.
+
+There is no MetaApi sandbox. `create_demo_account()` is the closest equivalent:
+it asks MetaApi to generate a real MT5 demo account at a demo broker server and
+provision a terminal for it, which gives real order mechanics with no financial
+exposure. It still requires a paid MetaApi token and bills for terminal runtime,
+so it is risk-free on the money but not on the cost.
+
 ## No container registry, CI, or local-image workflow
 
 Docker is not available on the development machine, so nothing here has been
 built into a container locally; the images are built in ACR by
-`infrastructure/azure/deploy.sh`. There is no CI pipeline, so the 288 tests are
+`infrastructure/azure/deploy.sh`. There is no CI pipeline, so the 315 tests are
 only run by hand. The web app has no unit tests at all, only typecheck and build.
 
 ## Deployed data stores are publicly reachable

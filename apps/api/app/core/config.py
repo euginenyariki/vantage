@@ -85,7 +85,8 @@ class Settings(BaseSettings):
     # Accepts "1" or "v1"; .env files commonly use the prefixed form.
     credential_key_version: str = "1"
     metaapi_token: str = ""
-    metaapi_api_url: str = "https://sandbox.app.metaapi.cloud"
+    # The adapter derives the client, provisioning and market-data hosts itself.
+    metaapi_region: str = "london"
 
     @property
     def credential_version_number(self) -> int:
