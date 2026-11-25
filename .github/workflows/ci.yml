@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Validate Python services
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Parse project metadata
+        run: |
+          python - <<'PY'
+          import pathlib
+          import tomllib
+
+          projects = sorted(pathlib.Path(".").rglob("pyproject.toml"))
+          if not projects:
+              raise SystemExit("No pyproject.toml files found")
+          for path in projects:
+              data = tomllib.loads(path.read_text(encoding="utf-8"))
+              name = data.get("project", {}).get("name")
+              if not name:
+                  raise SystemExit(f"Missing project name in {path}")
+              print(f"ok: {path} ({name})")
+          PY
+
+  web:
+    name: Typecheck and build web app
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
